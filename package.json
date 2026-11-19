@@ -9,7 +9,8 @@
     "start": "next start",
     "test": "node --test",
     "worker:once": "node scripts/worker-once.mjs",
-    "tenant:provision": "node scripts/provision-tenant.mjs"
+    "tenant:provision": "node scripts/provision-tenant.mjs",
+    "worker:serve": "node scripts/worker-service.mjs"
   },
   "engines": {
     "node": ">=20.9.0"

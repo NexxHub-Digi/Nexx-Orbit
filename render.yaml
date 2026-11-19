@@ -1,0 +1,19 @@
+# Plan-only infrastructure: enabling this service incurs Render worker charges.
+# Do not sync automatically without reviewing the plan and setting the secret.
+services:
+  - type: worker
+    name: nexx-orbit-dispatcher
+    runtime: node
+    plan: 0.5c-512mb
+    region: frankfurt
+    repo: https://github.com/NexxHub-Digi/Nexx-Orbit
+    branch: main
+    buildCommand: npm install --no-audit --no-fund
+    startCommand: npm run worker:serve
+    envVars:
+      - key: WORKER_DATABASE_URL
+        sync: false
+      - key: ORBIT_WORKER_SUBJECT
+        value: worker:orbit-dispatcher
+      - key: ORBIT_WORKER_POLL_MS
+        value: "3000"
