@@ -1,46 +1,48 @@
-# Nexx Orbit — Hybrid AI orchestration SaaS
+# Nexx Orbit — Hybrid AI Orchestration SaaS
 
-Nexx Orbit is a multi-tenant SaaS foundation for combining deterministic workflows with AI agents, tools/MCP integrations and governance.
+Tenant-isolated control plane for deterministic workflows, AI agents, model routing and MCP integrations. Built as a Next.js SaaS frontend/API, Neon PostgreSQL with strict row-level security, and a separate deterministic worker.
 
-## Current implementation (0.2 foundation)
-- **Next.js App Router** responsive landing screen; original interactive experience preserved at `/demo.html`.
-- **Authenticated server API** with OIDC/JWKS access-token validation: `GET /api/health`, `GET /api/v1/tenants`, `GET/POST /api/v1/workflows`, `GET/POST /api/v1/runs`.
-- **Neon/PostgreSQL migration** with tenants, memberships, workflow graphs, run records, FORCE RLS, tenant context and action-level checks.
-- **Unit tests and GitHub CI**. No production secrets committed.
+## What is implemented
+- Next.js App Router landing screen with the original interactive **synthetic prototype** at `/demo.html`.
+- OIDC/JWKS access-token verifier; real application endpoints fail closed without a configured issuer.
+- Tenant-scoped APIs: tenants, workflow drafts and publish, agents, MCP registry, model route registry, run queue, events, approval decisions and step status.
+- PostgreSQL migrations `001`, `002`, `003` with transaction-scoped RLS and distinct API / worker roles.
+- Limited **stateless MCP 2026-07-28** read-only JSON-RPC tools for workflows, agents, and runs. No outbound MCP execution.
+- Deterministic worker that completes start/noop/end nodes, pauses on approvals, resumes after decisions and **fails closed** on unconfigured model/tool/agent/condition nodes. The worker is a CLI entrypoint, not a running background service.
+- CI runs policy, DAG, MCP, role and worker tests plus Next.js build.
 
-### Critical scope distinctions
-The interactive prototype remains **in-memory demo only**. It is not connected to auth or database APIs. API access **requires** valid OIDC JWTs and actual database memberships; no role is assigned from user-supplied browser values. Run creation writes a queued record; no worker executes it. Provisioning, account invitation, deployed identity provider, live database, AI model gateway, payment/billing, agent runner, audit logs, event queue and production security acceptance remain outstanding.
-
-## Run locally
-Requires Node.js 20.9+. From the repository root:
+## Start local frontend
+Requires Node 20.9+.
 ```bash
 npm install
 npm run dev
 npm test
 npm run build
 ```
-Open http://localhost:3000 and http://localhost:3000/demo.html.
+Visit http://localhost:3000 and http://localhost:3000/demo.html. The demo's tenant switching is simulated and does **not** grant backend access.
 
-## Configure backend
-Copy `.env.example` to `.env.local`. Set `OIDC_ISSUER`, `OIDC_AUDIENCE`, `OIDC_JWKS_URL` and `DATABASE_URL` (server-only). Missing configuration returns a 503 rather than bypassing authentication.
-Run `db/migrations/001_foundation.sql` with a separate database migration/admin role. Provision an application role `orbit_app` **without** superuser, BYPASSRLS, or table-owner privileges, and grant only schema usage, SELECT on the four tables and INSERT on workflows/runs. Never use your migration owner connection string for public HTTP APIs.
-New tenants and memberships must be provisioned by a separate privileged, audited administrative process, never by self-selected client roles.
+## Backend configuration
+Copy `.env.example` to `.env.local`, then supply a trusted OIDC issuer/audience/JWKS and a **restricted** `orbit_api` database URL. `lib/server/db.js` rejects owner/worker credentials. Run migrations in numerical order as `orbit_owner` on a dedicated database. Set up restricted API and worker SQL grants as described in [docs/BACKEND_MCP.md](docs/BACKEND_MCP.md).
 
-## API
-Bearer OIDC access token required (except health).
-- `GET /api/v1/tenants` — list the active memberships for current subject
-- `GET /api/v1/workflows?tenant_id=UUID` — member-only workflow list
-- `POST /api/v1/workflows`: `{"tenant_id":"UUID","name":"A workflow","description":"","graph":{"nodes":[],"edges":[]}}`
-- `GET /api/v1/runs?tenant_id=UUID` — member-only run records
-- `POST /api/v1/runs`: `{"tenant_id":"UUID","workflow_id":"UUID"}` — queue record only, published workflows only.
+To provision a real organization, a trusted operator uses:
+```bash
+ADMIN_DATABASE_URL=... npm run tenant:provision -- --slug acme --name "Acme" --subject "verified-oidc-subject"
+```
+No privileged tenant self-registration endpoint exists. OIDC subject must already be verified out of band.
 
-## Architecture and roadmap
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+To execute **one** queued deterministic run on an explicitly assigned tenant:
+```bash
+WORKER_DATABASE_URL=... ORBIT_WORKER_TENANT_ID=... ORBIT_WORKER_SUBJECT=worker:tenant npm run worker:once
+```
+The worker identity must hold the active `operator` membership for that tenant, granted by a trusted provisioner. Run workers as separate processes, not Vercel request handlers. Production queue scheduling and automatic polling are **not** set up.
 
-## Production gates
-- JWT provider and Google sign-in wired, explicit tenant invitation/acceptance
-- Real Neon migrations and RLS tests using **runtime** DB role
-- Tenant ownership/admin provisioning service and audit logging
-- Browser-to-API implementation, E2E tests and server-side role enforcement
-- Durable agent/worker engine, idempotency, retries, approvals, budgets and webhook signing
-- Threat model, rate limits, observability and deployment verification
+## API and MCP
+See [docs/BACKEND_MCP.md](docs/BACKEND_MCP.md), including the route matrix, worker roles and security constraints.
+
+## Infrastructure state
+Dedicated dev Neon project: `nexx-orbit-dev` in London, PostgreSQL 17; migrations applied. QA tenants were created for direct DB isolation tests. Vercel project `nexx-orbit` was Git-linked; database URL stored encrypted for preview/dev. The first preview deployment could not launch because the Vercel team reached its daily Hobby deployment quota; no live deployment is confirmed. Live OIDC credentials are **not** configured.
+
+## Not implemented yet
+Google/OIDC onboarding UI, tenant invitations, interactive UI-to-API bindings, agent LLM calls, remote MCP client connections, credential vault, scheduled worker service, durable external side-effect retries, parallel/branching workflow execution, usage budgets and billing, billing events, full audit trail and production E2E acceptance.
+
+Security priority: enforce tenant RBAC, workers' tenant identity, explicit capability allowlists, private-network/redirect-safe egress, idempotent actions, quotas, traceable approvals and least-privileged credentials before remote model or MCP calls.

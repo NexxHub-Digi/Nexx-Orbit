@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start",
     "test": "node --test",
-    "worker:once": "node scripts/worker-once.mjs"
+    "worker:once": "node scripts/worker-once.mjs",
+    "tenant:provision": "node scripts/provision-tenant.mjs"
   },
   "engines": {
     "node": ">=20.9.0"

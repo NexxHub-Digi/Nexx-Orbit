@@ -1,43 +1,36 @@
-# Backend APIs and MCP foundation (phase 1)
+# Backend, API, MCP and worker implementation
 
-## Infrastructure
-Neon development project: `nexx-orbit-dev` (project ID `rough-scene-47898974`), branch `br-mute-pond-bj9k3lbx`, database `orbit`, region `aws-eu-west-2`. Dedicated to Orbit; no other Nexx product database was reused.
-Migrations `001_foundation.sql` and `002_orchestration.sql` applied to its empty development database. No customer data migrated. Separate `orbit_api` runtime role created; verified `rolsuper=false` and `rolbypassrls=false`. Keep privileged migration credentials out of the web API. To deploy, explicitly configure a restricted `DATABASE_URL` and trusted OIDC JWT issuer/audience/JWKS in server-only environment variables.
+## Connected development infrastructure
+- Dedicated Neon project: `nexx-orbit-dev`, `rough-scene-47898974`, branch `br-mute-pond-bj9k3lbx`, database `orbit`, PostgreSQL 17, region `aws-eu-west-2`.
+- Migrations `001_foundation.sql`, `002_orchestration.sql`, `003_worker.sql` applied successfully to dedicated development database.
+- Runtime DB roles `orbit_api` and `orbit_worker` verified: `rolsuper=false` and `rolbypassrls=false`; explicit grants keep tenants/memberships non-writable to public API.
+- Vercel Git-linked project ID `prj_mvEFYmSUJ2SGaChfGSnsQynUMPAc`. Restricted DB URL encrypted for Preview and Development; no live OIDC provider configured, and preview is blocked by daily deployment quota.
+- QA-only tenants Alpha/Beta and operator used to test RLS. Verified that subject Alpha cannot read Beta's workflows, cross-tenant INSERT fails with SQLSTATE 42501, and the worker cannot see Beta's run data.
 
-## Live code surface (routes still require a configured deployment)
-| Verb | Path | Description |
+## Authenticated routes (implementation, not live deployment acceptance)
+| Verb | Path | Role / behavior |
 |---|---|---|
-| GET | /api/health | Liveness, explicitly not database readiness |
-| GET | /api/v1/tenants | My active tenant memberships |
-| GET/POST | /api/v1/workflows | List/create tenant workflow draft |
-| POST | /api/v1/workflows/{workflowId}/publish?tenant_id=UUID | Validate DAG and publish draft |
-| GET/POST | /api/v1/agents | List/create agent definitions (draft only) |
-| GET/POST | /api/v1/mcp-connections | List/register remote MCP endpoint (disabled) |
-| GET/POST | /api/v1/model-routes | List/register model route (disabled) |
-| GET/POST | /api/v1/runs | List/queue runs; POST supports Idempotency-Key header |
-| GET | /api/v1/runs/{runId}/events?tenant_id=UUID | Tenant-only immutable event history |
-| POST | /api/mcp | Stateless, authenticated MCP read-only discovery of tenant workflows/agents/runs |
+| GET | /api/health | Public process liveness; does not verify database |
+| GET | /api/v1/tenants | Authenticated member's accessible tenants |
+| GET/POST | /api/v1/workflows | Member read, builder create |
+| POST | /api/v1/workflows/{id}/publish?tenant_id=UUID | Builder validates DAG, publishes draft |
+| GET/POST | /api/v1/agents | Member read, builder creates draft |
+| GET/POST | /api/v1/mcp-connections | Member read, builder registers disabled connector |
+| GET/POST | /api/v1/model-routes | Member read, admin registers disabled model route |
+| GET/POST | /api/v1/runs | Member read, operator queue published workflow; optional Idempotency-Key |
+| GET | /api/v1/runs/{id}/events?tenant_id=UUID | Read run events |
+| GET | /api/v1/runs/{id}/steps?tenant_id=UUID | Read step checkpoint states |
+| POST | /api/v1/runs/{id}/approvals/{stepId} | Owner/admin decide pending gate with `{tenant_id,decision}` |
+| POST | /api/mcp | Limited stateless MCP JSON-RPC `tools/list` and `tools/call` |
 
-All CRUD routes are guarded by OIDC token verification and explicit membership verification. Tenant ID is not trusted by itself. Runs are inserted as `queued` with a `queued` event, and will NOT execute until a worker is wired.
+The API never trusts tenant IDs or roles from the browser without database membership, and every read/write uses transaction-local subject + tenant settings. The MCP tool names are `orbit_list_workflows`, `orbit_list_agents`, `orbit_list_runs`. They are read-only, and every call requires a verified Bearer OIDC token. Supports a **subset** of the MCP 2026-07-28 Streamable HTTP contract with mirrored method/name headers; not full protocol implementation. Remote MCP connections are **registered only**, never called.
 
-### MCP protocol support
-Implements **limited** 2026-07-28 stateless Streamable HTTP JSON-RPC subset (POST JSON responses, `tools/list`, `tools/call`). Requires `MCP-Protocol-Version: 2026-07-28`, `Mcp-Method`, `Mcp-Name` for calls, and version in `params._meta["io.modelcontextprotocol/protocolVersion"]`. Public-facing route requires the same verified JWT identity as the application API. Advertised tools are read-only and still enforce tenant membership. This is **not** a full MCP host implementation; server/discover, OAuth Protected Resource Metadata, capability negotiation, extensions, subscriptions, tools for mutation, remote MCP clients and egress enforcement remain pending. MCP connection registry entries are disabled by default, cannot hold client-submitted secrets, and never initiate external fetches.
+## Deterministic worker, approval gates
+`npm run worker:once` uses `WORKER_DATABASE_URL` for restricted `orbit_worker` and explicitly provisioned `worker:...` subject with `operator` membership for a **single** configured tenant. In one transaction it claims the oldest queued/waiting-approval run with `FOR UPDATE SKIP LOCKED`, logs events, checkpoints each step, pauses on approval/manual nodes, and completes start/noop/end nodes. Decisions are recorded with unique keys; a worker resume checks `run_approvals`. Unsupported node types (agent, tool, parallel, condition, delay) are marked failed with explanation; none invoke external services. This gives a safe vertical slice, not yet an always-on orchestrator.
 
-### Execution lifecycle
-1. Builder creates graph draft.
-2. Builder publishes after deterministic DAG compilation.
-3. Operator supplies a stable `Idempotency-Key` header when queueing a run.
-4. Server stores run and immutable queued event atomically.
-5. **Next phase:** workers claim queued runs with tenant identity, persist step transitions/retries, enforce agent budgets and approval pauses, then call approved provider/tool adapters.
-6. Approvals, model execution, MCP outbound proxy, metrics, billing and event streaming are NOT built.
-
-### Tenant security checklist
-- Verify real OIDC issuer + Google OAuth setup and callback flows.
-- Use the `orbit_api` connection role (never `orbit_owner`) in deployment.
-- In dev, test same-subject memberships across two tenants plus explicit cross-tenant denial.
-- RLS policies use transaction-local `set_config` with verified subject and tenant.
-- Egress gateway MUST block local/private/metadata IPs after DNS resolution and after redirects, and enforce tenant-scoped tool ACL before any remote MCP call.
-- Add tenant-level quotas, tracing, audit/export, secrets vault and consented privileged support access.
-
-## Proof / verification status
-Neon migrations and restricted-role creation are confirmed by connected tools. GitHub CI must pass tests and Next build for each commit. Full authenticated UI E2E, API integration, real provider calls, live MCP client compatibility, app deployment and durable worker execution require further work.
+## Next production gates
+1. Configure trusted OIDC issuer + Google login + callback and tenant onboarding/invitations (with tenant owner provisioning).
+2. Re-enable Vercel preview after the team quota resets or the user adjusts their plan. Test live auth and database RLS from the deployed URL.
+3. Add tenant-dispatched scheduler/worker service and transactional outbox for jobs.
+4. Implement model-provider credential vault, safe outbound MCP client, SSRF/rebinding/redirect protection, tool scope policies, budgets, telemetry and audited approvals.
+5. Introduce safe execution backends, parallelism and retry/idempotency for side effects, and cross-tenant authenticated E2E suites.
