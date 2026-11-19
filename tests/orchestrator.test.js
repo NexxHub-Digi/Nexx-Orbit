@@ -1,0 +1,13 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {compilePlan} from "../lib/orchestrator/plan.js";
+import {safeRegistryURL,routeKey} from "../lib/server/inputs.js";
+import {MCP_VERSION,validateMcpTransport} from "../lib/mcp/protocol.js";
+const graph={nodes:[{id:"start",type:"start"},{id:"agent_1",type:"agent",config:{route:"default"}},{id:"finish",type:"end"}],edges:[{source:"start",target:"agent_1"},{source:"agent_1",target:"finish"}]};
+test("compiles a deterministic workflow DAG",()=>{const p=compilePlan(graph);assert.deepEqual(p.steps.map(x=>x.id),["start","agent_1","finish"]);assert.deepEqual(p.steps[2].dependsOn,["agent_1"])});
+test("rejects cycles",()=>{assert.throws(()=>compilePlan({...graph,edges:[...graph.edges,{source:"finish",target:"start"}]}) )});
+test("rejects disconnected nodes",()=>{assert.throws(()=>compilePlan({...graph,nodes:[...graph.nodes,{id:"lost",type:"tool"}]}) )});
+test("rejects unsupported node types",()=>{assert.throws(()=>compilePlan({...graph,nodes:[{id:"start",type:"shell"},...graph.nodes.slice(1)]}) )});
+test("MCP registration accepts only sanitized public HTTPS names",()=>{assert.equal(safeRegistryURL("https://mcp.example.com/api"),"https://mcp.example.com/api");for(const value of ["http://localhost/mcp","https://127.0.0.1/mcp","https://user:pass@example.com","https://example.com?token=secret","https://server.internal/mcp"])assert.throws(()=>safeRegistryURL(value))});
+test("model routes have constrained identifiers",()=>{assert.equal(routeKey("primary-groq"),"primary-groq");assert.throws(()=>routeKey("Primary Model"))});
+test("MCP validates metadata and mirrored headers",()=>{const body={jsonrpc:"2.0",id:1,method:"tools/call",params:{name:"orbit_list_runs",_meta:{"io.modelcontextprotocol/protocolVersion":MCP_VERSION}}};const headers=new Headers({"mcp-protocol-version":MCP_VERSION,"mcp-method":"tools/call","mcp-name":"orbit_list_runs"});const r=new Request("https://orbit.example.com/api/mcp",{method:"POST",headers});assert.equal(validateMcpTransport(r,body),true);headers.set("mcp-name","other");assert.throws(()=>validateMcpTransport(new Request(r.url,{method:"POST",headers}),body))});
