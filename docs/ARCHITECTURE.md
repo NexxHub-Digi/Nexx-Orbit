@@ -33,8 +33,8 @@ flowchart LR
 
 ## Prioritized phases
 - F0 **done as source code**: Next.js shell, interactive demo preservation, OIDC verification module, tenant queries, basic RLS schema, tests, CI.
-- F1 **next**: OIDC/Google login, tenant onboarding, invitations, restricted DB role setup, transactional integration tests, UI data binding.
-- F2 **next**: graph validation (cycle rules), workflow publish/versioning, durable queue/outbox, worker runtime, retries, idempotency, approvals.
+- F1 **partial**: Google OIDC code flow and tenant onboarding SQL plus API-connected workspace implemented, real OAuth credentials and live authenticated E2E still required.
+- F2 **partial**: graph validation, draft publish, idempotent queue, deterministic worker and approvals implemented; continuous hosting, persistent outbox, retries and versioned revision history outstanding.
 - F3: model/provider routing, MCP capability mediation, secret vault, tenant memory/RAG, budgets, evaluations.
 - F4: billing and metering, governance, SLO dashboards, access review, security acceptance and deployment.
 

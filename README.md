@@ -1,48 +1,49 @@
-# Nexx Orbit — Hybrid AI Orchestration SaaS
+# Nexx Orbit — Hybrid Multi-Tenant AI Orchestration SaaS
 
-Tenant-isolated control plane for deterministic workflows, AI agents, model routing and MCP integrations. Built as a Next.js SaaS frontend/API, Neon PostgreSQL with strict row-level security, and a separate deterministic worker.
+Nexx Orbit combines a Next.js SaaS control plane, Google OIDC login, tenant-scoped APIs, Neon PostgreSQL RLS and a separate orchestration dispatcher.
 
-## What is implemented
-- Next.js App Router landing screen with the original interactive **synthetic prototype** at `/demo.html`.
-- OIDC/JWKS access-token verifier; real application endpoints fail closed without a configured issuer.
-- Tenant-scoped APIs: tenants, workflow drafts and publish, agents, MCP registry, model route registry, run queue, events, approval decisions and step status.
-- PostgreSQL migrations `001`, `002`, `003` with transaction-scoped RLS and distinct API / worker roles.
-- Limited **stateless MCP 2026-07-28** read-only JSON-RPC tools for workflows, agents, and runs. No outbound MCP execution.
-- Deterministic worker that completes start/noop/end nodes, pauses on approvals, resumes after decisions and **fails closed** on unconfigured model/tool/agent/condition nodes. The worker is a CLI entrypoint, not a running background service.
-- CI runs policy, DAG, MCP, role and worker tests plus Next.js build.
+## Delivered in code
+- **Identity:** Google OpenID Connect authorization-code + PKCE + state + nonce, verified Google ID token, signed HttpOnly 8-hour session, exact-origin CSRF checks; alternative trusted OIDC Bearer JWT API support.
+- **Tenant onboarding:** `POST /api/v1/tenants` invokes a narrow privileged SQL provisioning function with per-identity limits, owner membership and dispatcher assignment. Database row-level security protects tenant resources.
+- **Real UI:** `/workspace` displays actual tenant API records, supports organization creation and switching, workflow drafts/publishing, run queueing, approval decisions, agent drafts, MCP endpoint registry and model routes. `/demo.html` remains a synthetic interactive showcase.
+- **Orchestration:** DAG validation, versioned draft publishing, idempotent queueing, event/step persistence, human approval gates, and deterministic start/noop/end nodes.
+- **Worker:** `npm run worker:serve` is a continuously polling **process entrypoint** with multi-tenant membership enumeration. External agent, model and MCP operations remain intentionally disabled until safely integrated.
+- **MCP:** authenticated read-only stateless JSON-RPC subset (workflow/agent/run listing); outbound MCP registry entries disabled.
+- **CI:** Node unit tests and Next production build in GitHub Actions.
 
-## Start local frontend
+## Repository setup
 Requires Node 20.9+.
-```bash
+
+```sh
 npm install
-npm run dev
 npm test
 npm run build
+npm run dev
 ```
-Visit http://localhost:3000 and http://localhost:3000/demo.html. The demo's tenant switching is simulated and does **not** grant backend access.
 
-## Backend configuration
-Copy `.env.example` to `.env.local`, then supply a trusted OIDC issuer/audience/JWKS and a **restricted** `orbit_api` database URL. `lib/server/db.js` rejects owner/worker credentials. Run migrations in numerical order as `orbit_owner` on a dedicated database. Set up restricted API and worker SQL grants as described in [docs/BACKEND_MCP.md](docs/BACKEND_MCP.md).
+Use `/login` for Google sign-in and `/workspace` for authenticated data. Configure environment variables based on `.env.example`. No OAuth, database or API secrets belong in GitHub. See `docs/GOOGLE_AUTH.md`, `docs/BACKEND_MCP.md` and `docs/WORKER_SERVICE.md`.
 
-To provision a real organization, a trusted operator uses:
-```bash
-ADMIN_DATABASE_URL=... npm run tenant:provision -- --slug acme --name "Acme" --subject "verified-oidc-subject"
+### Google Cloud setup required
+Create a Web application OAuth client with callback `https://<app-host>/api/auth/google/callback`; configure `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `AUTH_APP_ORIGIN`, `AUTH_SESSION_SECRET`. The Google sign-in flow cannot work without these real settings and matching authorized origins.
+
+### Database and worker
+Neon project `nexx-orbit-dev` (dev only), PostgreSQL 17, migrations 001–004 applied. Separate runtime roles `orbit_api` and `orbit_worker` without SUPERUSER/BYPASSRLS. Use `orbit_api` for the Next.js server, `orbit_worker` for the separate service. Tenant SQL onboarding is validated with the restricted API role and explicit tenant-isolation checks.
+
+Start the dispatcher in a dedicated worker process:
+```sh
+WORKER_DATABASE_URL=... ORBIT_WORKER_SUBJECT=worker:orbit-dispatcher npm run worker:serve
 ```
-No privileged tenant self-registration endpoint exists. OIDC subject must already be verified out of band.
 
-To execute **one** queued deterministic run on an explicitly assigned tenant:
-```bash
-WORKER_DATABASE_URL=... ORBIT_WORKER_TENANT_ID=... ORBIT_WORKER_SUBJECT=worker:tenant npm run worker:once
-```
-The worker identity must hold the active `operator` membership for that tenant, granted by a trusted provisioner. Run workers as separate processes, not Vercel request handlers. Production queue scheduling and automatic polling are **not** set up.
+Provisioned tenants receive `worker:orbit-dispatcher` as an `operator` membership. The service loops over authorized active tenants and records execution events transactionally.
 
-## API and MCP
-See [docs/BACKEND_MCP.md](docs/BACKEND_MCP.md), including the route matrix, worker roles and security constraints.
+### Deployment
+Orbit is Git-linked to Vercel. The Vercel Hobby account's daily deployment cap prevented the preview. The restricted DATABASE_URL and randomly generated AUTH_SESSION_SECRET values were stored as encrypted project environment variables; OAuth client credentials and canonical app origin still require configuration. The Render worker Blueprint in `render.yaml` is **plan only**: Render reported `need_payment_info` and no continuous worker deployment was created.
 
-## Infrastructure state
-Dedicated dev Neon project: `nexx-orbit-dev` in London, PostgreSQL 17; migrations applied. QA tenants were created for direct DB isolation tests. Vercel project `nexx-orbit` was Git-linked; database URL stored encrypted for preview/dev. The first preview deployment could not launch because the Vercel team reached its daily Hobby deployment quota; no live deployment is confirmed. Live OIDC credentials are **not** configured.
+## Production acceptance still outstanding
+- Configure Google Cloud client and exact canonical deployment origin; test real login/callback/logout.
+- Complete browser API integration under two real accounts and tenant permission combinations.
+- Deploy and monitor a dedicated 24/7 worker; test approval/restart/retry/failover.
+- Add tenant invitations, roles UI, credential vault, outbound MCP adapter protections, model calls, retries, quotas, billing, metering and audit logs.
+- Harden session revocation, platform administration, published workflow immutability and privileged operations before production launch.
 
-## Not implemented yet
-Google/OIDC onboarding UI, tenant invitations, interactive UI-to-API bindings, agent LLM calls, remote MCP client connections, credential vault, scheduled worker service, durable external side-effect retries, parallel/branching workflow execution, usage budgets and billing, billing events, full audit trail and production E2E acceptance.
-
-Security priority: enforce tenant RBAC, workers' tenant identity, explicit capability allowlists, private-network/redirect-safe egress, idempotent actions, quotas, traceable approvals and least-privileged credentials before remote model or MCP calls.
+**Do not represent the UI prototype or passing CI as production integration acceptance.**
