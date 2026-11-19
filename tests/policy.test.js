@@ -1,0 +1,10 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {can,validUUID,validateGraph,assertSameTenant} from "../lib/policy.js";
+test("viewer is read only",()=>{assert.equal(can("viewer","workflows:read"),true);assert.equal(can("viewer","workflows:create"),false);assert.equal(can("viewer","runs:create"),false)});
+test("operator can start but not create workflows",()=>{assert.equal(can("operator","runs:create"),true);assert.equal(can("operator","workflows:create"),false)});
+test("builder cannot administer members",()=>{assert.equal(can("builder","members:manage"),false);assert.equal(can("builder","workflows:create"),true)});
+test("invalid roles fail closed",()=>{assert.equal(can("root","workflows:read"),false);assert.equal(can("platform_owner","runs:create"),false)});
+test("tenant mismatches are denied",()=>{assert.doesNotThrow(()=>assertSameTenant("a","a"));assert.throws(()=>assertSameTenant("a","b"),{status:403});assert.throws(()=>assertSameTenant(null,"b"),{status:403})});
+test("graph requires known distinct nodes",()=>{assert.equal(validateGraph({nodes:[{id:"a"}],edges:[]}),true);assert.equal(validateGraph({nodes:[{id:"a"},{id:"a"}],edges:[]}),false);assert.equal(validateGraph({nodes:[{id:"a"}],edges:[{source:"a",target:"b"}]}),false)});
+test("uuid validation",()=>{assert.equal(validUUID("00000000-0000-0000-0000-000000000001"),true);assert.equal(validUUID("../../bad"),false)});
