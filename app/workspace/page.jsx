@@ -25,6 +25,8 @@ export default function Workspace(){
  const [org,setOrg]=useState({name:"",slug:""}),[workflow,setWorkflow]=useState({name:"",description:"",template:"deterministic"});
  const [agent,setAgent]=useState({name:"",description:"",instructions:""}),[conn,setConn]=useState({name:"",endpoint_url:""});
  const [model,setModel]=useState({route_key:"primary",provider:"groq",model_id:""});
+ const [inviteEmail,setInviteEmail]=useState(""),[inviteRole,setInviteRole]=useState("viewer");
+ const [invites,setInvites]=useState([]),[lastInvite,setLastInvite]=useState("");
  const tenant=useMemo(()=>tenants.find(x=>x.id===tenantId),[tenantId,tenants]);
  const role=tenant?.role||"viewer";
  const notify=(text,type="success")=>setMessage({text,type});
@@ -109,6 +111,37 @@ export default function Workspace(){
   await api("/api/v1/model-routes",{method:"POST",body:JSON.stringify({tenant_id:tenantId,...model})});
   setModel({route_key:"primary",provider:"groq",model_id:""});notify("Model route registered but disabled pending credentials.");
  })};
+ const loadInvites=async(id=tenantId)=>{
+  if(!id||!["owner","admin"].includes(tenant?.role)){setInvites([]);return}
+  try{
+   const res=await api("/api/v1/tenants/"+id+"/invitations");
+   setInvites(res.invitations||[]);
+  }catch(e){notify(e.message,"error")}
+ };
+ const createInvite=async(e)=>{
+  e.preventDefault();setBusy(true);setMessage(null);
+  try{
+   const result=await api("/api/v1/tenants/"+tenantId+"/invitations",{method:"POST",body:JSON.stringify({email:inviteEmail,role:inviteRole})});
+   setLastInvite(result.join_url);setInviteEmail("");
+   await loadInvites(tenantId);
+   notify("Invitation created. Copy the one-time link now; it will not be displayed again.");
+  }catch(e){notify(e.message,"error")}finally{setBusy(false)}
+ };
+ const revokeInvite=async(id)=>{
+  setBusy(true);setMessage(null);
+  try{
+   await api("/api/v1/tenants/"+tenantId+"/invitations/"+id,{method:"DELETE"});
+   await loadInvites(tenantId);notify("Invitation revoked");
+  }catch(e){notify(e.message,"error")}finally{setBusy(false)}
+ };
+ const copyInvite=async()=>{
+  try{await navigator.clipboard.writeText(lastInvite);notify("Private link copied")}
+  catch{notify("Select the invitation URL and copy it manually","error")}
+ };
+ useEffect(()=>{setLastInvite("");setInvites([])},[tenantId]);
+ useEffect(()=>{
+  if(tab==="settings"&&tenantId&&["owner","admin"].includes(tenant?.role))loadInvites(tenantId);
+ },[tab,tenantId,tenant?.role]);
  const logout=async()=>{try{await api("/api/auth/logout",{method:"POST"});window.location.replace("/login")}catch(e){notify(e.message,"error")}};
  if(loading)return <main className="orbitLoading">✦ <span>Loading Nexx Orbit…</span></main>;
  if(!session)return <main className="orbitLoading">Authentication required. <Link href="/login">Sign in</Link></main>;
@@ -141,7 +174,24 @@ export default function Workspace(){
     {tab==="agents"&&<><SectionTitle title="Agent Studio" subtitle="Define tenant-owned agents and their default model routes."/>{canWrite(role)&&<section className="orbitPanel"><form className="orbitForm orbitFormColumns" onSubmit={createAgent}><label>Agent name<input required maxLength={120} value={agent.name} onChange={e=>setAgent({...agent,name:e.target.value})} placeholder="Research strategist"/></label><label>Purpose<input value={agent.description} onChange={e=>setAgent({...agent,description:e.target.value})} placeholder="Research planning and synthesis"/></label><label className="spanFull">Instructions<textarea rows={3} value={agent.instructions} onChange={e=>setAgent({...agent,instructions:e.target.value})} placeholder="Describe scope, safety, reasoning and allowed tools."/></label><button className="orbitPrimary" disabled={busy}>Save draft agent</button></form></section>}<section className="orbitPanel">{data.agents.length?data.agents.map(a=><div className="orbitResource" key={a.id}><div><strong>{a.name}</strong><p>{a.description||"Agent definition"} · model: {a.model_route}</p></div><Pill value={a.status}/></div>):<Empty title="No AI agents registered" description="Agent definitions start in draft and do not make external model calls."/>}</section></>}
     {tab==="mcp"&&<><SectionTitle title="MCP Integration Hub" subtitle="Register remote tool endpoints. Execution remains disabled until reviewed."/><div className="orbitTwo"><section className="orbitPanel"><h3>Register MCP endpoint</h3>{canWrite(role)?<form className="orbitForm" onSubmit={createConnection}><label>Connection name<input value={conn.name} required onChange={e=>setConn({...conn,name:e.target.value})} placeholder="Research tool server"/></label><label>HTTPS endpoint<input value={conn.endpoint_url} required type="url" onChange={e=>setConn({...conn,endpoint_url:e.target.value})} placeholder="https://mcp.example.com/mcp"/></label><button className="orbitPrimary" disabled={busy}>Register disabled connection</button></form>:<p className="orbitSub">Read-only access</p>}</section><section className="orbitPanel"><h3>Secure integration policy</h3><p className="orbitSub">Endpoints are stored without executing requests or injecting API keys. Outbound MCP calls require credential vault, explicit tool grants, SSRF protection and operational approval.</p><span className="orbitMutedFlag">Execution locked by design</span></section></div><section className="orbitPanel">{data.connections.length?data.connections.map(c=><div className="orbitResource" key={c.id}><div><strong>{c.name}</strong><p>{c.endpoint_url}</p></div><Pill value={c.status}/></div>):<Empty title="No MCP connections" description="Register tools for this tenant when ready."/>}</section></>}
     {tab==="models"&&<><SectionTitle title="AI Model Gateway" subtitle="Prepare provider and model routes. No secrets are stored in this form."/>{["owner","admin"].includes(role)&&<section className="orbitPanel"><form className="orbitForm orbitFormColumns" onSubmit={createRoute}><label>Route key<input required value={model.route_key} onChange={e=>setModel({...model,route_key:e.target.value})} placeholder="primary"/></label><label>Provider<select value={model.provider} onChange={e=>setModel({...model,provider:e.target.value})}>{["openai","anthropic","gemini","groq","deepseek","qwen","huggingface","custom"].map(x=><option key={x} value={x}>{x}</option>)}</select></label><label className="spanFull">Model ID<input required value={model.model_id} onChange={e=>setModel({...model,model_id:e.target.value})} placeholder="Provider-specific model ID"/></label><button className="orbitPrimary" disabled={busy}>Register model route</button></form></section>}<section className="orbitPanel">{data.routes.length?data.routes.map(m=><div className="orbitResource" key={m.id}><div><strong>{m.route_key}</strong><p>{m.provider} / {m.model_id}</p></div><Pill value={m.status}/></div>):<Empty title="No model routes" description="Register your first provider route. All routes remain disabled until configured."/>}</section></>}
-    {tab==="settings"&&<><SectionTitle title="Organization settings" subtitle="Membership is enforced server-side; switching organizations never grants permissions."/><section className="orbitPanel"><h3>Current tenant</h3><div className="orbitSettingsGrid"><div><small>Organization</small><strong>{tenant.name}</strong></div><div><small>Slug</small><strong>{tenant.slug}</strong></div><div><small>Your role</small><strong>{tenant.role}</strong></div><div><small>Plan</small><strong>{tenant.plan}</strong></div></div></section><section className="orbitPanel"><h3>Create an additional organization</h3><p className="orbitSub">Your Google identity can own up to three organizations.</p><form className="orbitForm orbitFormColumns" onSubmit={createTenant}><label>Name<input required value={org.name} onChange={e=>setOrg({...org,name:e.target.value})} placeholder="New company name"/></label><label>Slug<input required pattern="[a-z0-9]+(-[a-z0-9]+)*" value={org.slug} onChange={e=>setOrg({...org,slug:e.target.value.toLowerCase().replace(/[^a-z0-9-]/g,"")})} placeholder="new-company"/></label><button className="orbitPrimary" disabled={busy}>Create new tenant</button></form></section></>}
+    {tab==="settings"&&<><SectionTitle title="Organization settings" subtitle="Membership is enforced server-side; switching organizations never grants permissions."/><section className="orbitPanel"><h3>Current tenant</h3><div className="orbitSettingsGrid"><div><small>Organization</small><strong>{tenant.name}</strong></div><div><small>Slug</small><strong>{tenant.slug}</strong></div><div><small>Your role</small><strong>{tenant.role}</strong></div><div><small>Plan</small><strong>{tenant.plan}</strong></div></div></section>{["owner","admin"].includes(role)&&<section className="orbitPanel">
+  <h3>Team invitations</h3>
+  <p className="orbitSub">Invite a verified Google account into this organization. The private link expires after 72 hours and can only be used once.</p>
+  <form className="orbitForm orbitFormColumns" onSubmit={createInvite}>
+   <label>Invitee email<input required type="email" maxLength={254} value={inviteEmail} onChange={e=>setInviteEmail(e.target.value)} placeholder="colleague@example.com"/></label>
+   <label>Assigned role<select value={inviteRole} onChange={e=>setInviteRole(e.target.value)}>
+    <option value="viewer">Viewer — read only</option>
+    <option value="operator">Operator — execute workflows</option>
+    <option value="builder">Builder — create workflows</option>
+    <option value="admin">Admin — manage members and settings</option>
+   </select></label>
+   <button type="submit" className="orbitPrimary" disabled={busy}>Create invitation</button>
+  </form>
+  {lastInvite&&<div className="orbitInviteBox"><label>Copy the private invitation link now<input aria-label="Invitation URL" readOnly value={lastInvite} onFocus={e=>e.target.select()}/></label><button type="button" className="orbitSoftButton" onClick={copyInvite}>Copy link</button><button type="button" className="orbitSoftButton" onClick={()=>setLastInvite("")}>Dismiss</button></div>}
+  <h3 className="orbitInviteHeading">Invitation history</h3>
+  {invites.length?invites.map(i=><div className="orbitResource" key={i.invitation_id}><div><strong>{i.invited_email}</strong><p>{i.invited_role} · expires {formatDate(i.expires_on)}</p></div><div className="orbitResourceActions"><Pill value={i.invite_status}/>{i.invite_status==="pending"&&<button disabled={busy} className="orbitSoftButton" type="button" onClick={()=>revokeInvite(i.invitation_id)}>Revoke</button>}</div></div>):<p className="orbitSub">No invitations for this organization.</p>}
+ </section>}
+ <section className="orbitPanel"><h3>Create an additional organization</h3><p className="orbitSub">Your Google identity can own up to three organizations.</p><form className="orbitForm orbitFormColumns" onSubmit={createTenant}><label>Name<input required value={org.name} onChange={e=>setOrg({...org,name:e.target.value})} placeholder="New company name"/></label><label>Slug<input required pattern="[a-z0-9]+(-[a-z0-9]+)*" value={org.slug} onChange={e=>setOrg({...org,slug:e.target.value.toLowerCase().replace(/[^a-z0-9-]/g,"")})} placeholder="new-company"/></label><button className="orbitPrimary" disabled={busy}>Create new tenant</button></form></section></>}
    </>}
   </main>
  </div>
